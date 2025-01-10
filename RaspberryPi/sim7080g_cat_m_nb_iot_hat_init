@@ -1,0 +1,4 @@
+echo 575 > /sys/class/gpio/export
+sleep 0.1
+echo out > /sys/class/gpio/gpiochip575/direction
+echo 0 > /sys/class/gpio/gpiochip575/direction

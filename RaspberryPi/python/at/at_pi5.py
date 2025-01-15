@@ -92,3 +92,5 @@ finally:
     if ser:
         ser.close()
     powerDown(pwrkey)
+    print(f"Logs are stored at: {log_file}")
+    logger.info(f"Logs are stored at: {log_file}")

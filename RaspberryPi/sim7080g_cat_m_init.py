@@ -1,126 +1,144 @@
 #!/usr/bin/python3
 
-import serial
-import logging
-from logging.handlers import TimedRotatingFileHandler
-from gpiozero import OutputDevice
-from time import sleep
-import argparse
+import os
 import subprocess
+import logging
+from time import sleep
 
 # ログ設定
-log_file = "/var/log/sim7080x.log"
-logger = logging.getLogger("SIM7080X")
-logger.setLevel(logging.INFO)
+log_file = "/var/log/sim7080g_pppd.log"
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s",
+    handlers=[
+        logging.FileHandler(log_file),  # ファイルにログを記録
+        logging.StreamHandler()        # 標準出力にログを表示
+    ]
+)
 
-# ログローテーション (7日間)
-handler = TimedRotatingFileHandler(log_file, when="D", interval=7, backupCount=4)
-formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
-handler.setFormatter(formatter)
-logger.addHandler(handler)
+logger = logging.getLogger("SIM7080G_PPPD")
+
+# PPP 接続用の設定ファイルパス
+PPP_PEER_FILE = "/etc/ppp/peers/sim7080g"
+CHAT_CONNECT_FILE = "/etc/chatscripts/chat-connect"
+CHAT_DISCONNECT_FILE = "/etc/chatscripts/chat-disconnect"
 
 # GPIO ピン番号 (BCM モード)
-powerKey = 4  # GPIO4 (物理ピン7)
+POWER_KEY_GPIO = 4
 
-# シリアルポート設定
-ser = serial.Serial('/dev/ttyAMA0', 9600, timeout=1)  # `/dev/ttyAMA0` に接続
-ser.flushInput()
-
-def powerOn(powerKey):
-    logger.info('SIM7080X is starting...')
-    pwrkey = OutputDevice(powerKey, active_high=True, initial_value=False)
-    pwrkey.on()
-    sleep(1)
-    pwrkey.off()
-    sleep(5)
-    logger.info('Power on sequence complete.')
-
-def sendCommand(command, expected="OK"):
-    logger.info(f'Sending command: {command}')
-    ser.write((command + "\r\n").encode())
-    sleep(1)
-    if ser.in_waiting:
-        rec_buff = ser.read(ser.in_waiting).decode()
-        logger.info(f'Received: {rec_buff}')
-        if expected in rec_buff:
-            return True
-    return False
-
-def initializeDataMode(apn, plmn):
-    logger.info(f'Initializing SIM7080X for data mode with APN={apn}, PLMN={plmn}')
-    sendCommand('AT')
-    sendCommand('AT+CPIN?')
-    sendCommand('AT+CNMP=38')  # LTE モード
-    sendCommand('AT+CMNB=1')   # LTE Cat-M ネットワーク
-    sendCommand('AT+CSQ')
-    sendCommand(f'AT+CGDCONT=1,"IP","{apn}"')
-    sendCommand(f'AT+COPS=1,2,"{plmn}"')
-    sendCommand('AT+CGREG?')
-    sendCommand('AT+CGNAPN')
-    sendCommand('AT+CPSI?')
-    sendCommand('AT+CNACT=0,1')
-    if sendCommand('AT+CNACT?', "OK"):
-        logger.info('SIM7080X is ready for data mode.')
-
-def configureNetworkManager(apn, connection_name="1NCE", device="/dev/ttyAMA0"):
-    logger.info(f"Creating NetworkManager profile: {connection_name} with APN: {apn}")
-
-    # Step 4: Create a NetworkManager profile
+def power_on_modem():
+    """
+    Power on the SIM7080G module using GPIO
+    """
     try:
-        logger.info(f"Deleting existing NetworkManager profile: {connection_name}")
-        subprocess.run(
-            ["sudo", "nmcli", "connection", "delete", connection_name],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False
-        )
-        logger.info("Adding new NetworkManager profile")
-        subprocess.run(
-            ["sudo", "nmcli", "connection", "add", "type", "gsm",
-             "ifname", device, "con-name", connection_name,
-             "apn", apn, "gsm.num", "*99#", "gsm.username", "", "gsm.password", ""],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True
-        )
-    except subprocess.CalledProcessError as e:
-        logger.error(f"Failed to configure NetworkManager: {e}")
-        return False
+        from gpiozero import OutputDevice
+        logger.info("Powering on the SIM7080G module...")
+        power_key = OutputDevice(POWER_KEY_GPIO, active_high=True, initial_value=False)
+        power_key.on()
+        sleep(1)
+        power_key.off()
+        sleep(5)
+        logger.info("Power-on sequence completed.")
+    except ImportError:
+        logger.warning("gpiozero module not found. Skipping power-on step.")
 
-    # Step 5: Activate the connection
+def setup_ppp_files(apn, plmn):
+    """
+    Create PPP and chat script files for the SIM7080G connection
+    """
+    logger.info("Setting up PPP configuration files...")
     try:
-        logger.info(f"Activating NetworkManager connection: {connection_name}")
-        result = subprocess.run(
-            ["sudo", "nmcli", "connection", "up", connection_name],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True
-        )
-        logger.info(f"NetworkManager output: {result.stdout.decode().strip()}")
-    except subprocess.CalledProcessError as e:
-        logger.error(f"Failed to activate NetworkManager connection: {e}")
-        return False
+        # PPP peers file
+        with open(PPP_PEER_FILE, "w") as ppp_file:
+            ppp_file.write(f"""
+/dev/ttyAMA0 9600
+connect '/usr/sbin/chat -v -f {CHAT_CONNECT_FILE}'
+disconnect '/usr/sbin/chat -v -f {CHAT_DISCONNECT_FILE}'
+noauth
+defaultroute
+usepeerdns
+persist
+user ""
+password ""
+""")
+        logger.info("PPP peers file created.")
 
-    # Step 6: Verify the connection
+        # Chat connect file
+        with open(CHAT_CONNECT_FILE, "w") as connect_file:
+            connect_file.write(f"""
+ABORT 'BUSY'
+ABORT 'NO CARRIER'
+ABORT 'ERROR'
+ABORT 'NO DIALTONE'
+'' AT
+OK ATZ
+OK AT+CGDCONT=1,"IP","{apn}"
+OK AT+COPS=1,2,"{plmn}"
+OK ATD*99#
+CONNECT ''
+""")
+        logger.info("Chat connect file created.")
+
+        # Chat disconnect file
+        with open(CHAT_DISCONNECT_FILE, "w") as disconnect_file:
+            disconnect_file.write("""
+ABORT 'ERROR'
+'' +++
+SAY "Disconnecting the modem\n"
+'' ATH
+OK
+""")
+        logger.info("Chat disconnect file created.")
+
+    except Exception as e:
+        logger.error(f"Error setting up PPP files: {e}")
+        raise
+
+def connect():
+    """
+    Establish a PPP connection using pppd
+    """
+    logger.info("Starting PPP connection...")
     try:
-        logger.info("Verifying the internet connection with ping")
-        subprocess.run(
-            ["ping", "-c", "4", "8.8.8.8"],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True
-        )
-        logger.info("Internet connection successfully established.")
-        return True
+        result = subprocess.run(["sudo", "pon", "sim7080g"], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        logger.info("PPP connection started successfully.")
+        logger.info(result.stdout.decode())
     except subprocess.CalledProcessError as e:
-        logger.error(f"Failed to establish internet connection: {e}")
-        return False
+        logger.error(f"Failed to start PPP connection: {e.stderr.decode()}")
+        raise
 
-def main(apn, plmn, connection_name):
-    powerOn(powerKey)
-    initializeDataMode(apn, plmn)
-    if configureNetworkManager(apn, connection_name):
-        logger.info("NetworkManager configuration and connection successful.")
-    else:
-        logger.error("NetworkManager configuration or connection failed.")
+def disconnect():
+    """
+    Terminate the PPP connection using pppd
+    """
+    logger.info("Stopping PPP connection...")
+    try:
+        result = subprocess.run(["sudo", "poff", "sim7080g"], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        logger.info("PPP connection terminated successfully.")
+        logger.info(result.stdout.decode())
+    except subprocess.CalledProcessError as e:
+        logger.error(f"Failed to stop PPP connection: {e.stderr.decode()}")
+        raise
 
-if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description="Initialize SIM7080X for data mode")
-    parser.add_argument('--apn', type=str, default="iot.1nce.net", help="APN (default: iot.1nce.net)")
-    parser.add_argument('--plmn', type=str, default="44020", help="PLMN (default: 44020)")
-    parser.add_argument('--connection_name', type=str, default="1NCE", help="Connection name (default: 1NCE)")
+def main(apn, plmn):
+    """
+    Main function to power on the modem, set up PPP, and establish connection
+    """
+    power_on_modem()
+    setup_ppp_files(apn, plmn)
+    connect()
+    logger.info("PPP connection established. You can now access the internet.")
+
+if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Setup and manage SIM7080G PPP connection")
+    parser.add_argument("--apn", type=str, default="iot.1nce.net", help="APN for the PPP connection (default: iot.1nce.net)")
+    parser.add_argument("--plmn", type=str, default="44020", help="PLMN for the PPP connection (default: 44020)")
+    parser.add_argument("--disconnect", action="store_true", help="Disconnect the PPP connection")
     args = parser.parse_args()
 
-    main(args.apn, args.plmn, args.connection_name)
+    if args.disconnect:
+        disconnect()
+    else:
+        main(args.apn, args.plmn)

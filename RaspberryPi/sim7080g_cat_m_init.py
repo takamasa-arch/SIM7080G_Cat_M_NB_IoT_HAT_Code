@@ -180,21 +180,29 @@ def wait_for_modem_ready(timeout=60):
         logger.error(f"Error while waiting for modem readiness: {e}")
         raise
 
-def check_ppp_device():
+def check_ppp_device(retries=5, interval=5):
     """
-    Check if ppp0 device is available
+    Check if ppp0 device is available, retrying if necessary.
+
+    Args:
+        retries (int): Number of retries before giving up.
+        interval (int): Time in seconds between retries.
     """
-    try:
-        logger.info("Checking if ppp0 device is available...")
-        result = subprocess.run(["ifconfig", "ppp0"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        if result.returncode != 0:
-            logger.error("ppp0 device not found. PPP connection might have failed.")
+    logger.info("Checking if ppp0 device is available...")
+    for attempt in range(1, retries + 1):
+        try:
+            result = subprocess.run(["ifconfig", "ppp0"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            if result.returncode == 0:
+                logger.info(f"ppp0 device is available (Attempt {attempt}/{retries}).")
+                return True
+            else:
+                logger.warning(f"ppp0 device not found. Retrying in {interval} seconds... (Attempt {attempt}/{retries})")
+                sleep(interval)
+        except Exception as e:
+            logger.error(f"Error checking ppp0 device: {e}")
             return False
-        logger.info("ppp0 device is available.")
-        return True
-    except Exception as e:
-        logger.error(f"Error checking ppp0 device: {e}")
-        return False
+    logger.error("ppp0 device not found after retries. PPP connection might have failed.")
+    return False
 
 def main(apn, plmn):
     """
@@ -204,8 +212,8 @@ def main(apn, plmn):
     wait_for_modem_ready()
     setup_ppp_files(apn, plmn)
     connect()
-    if not check_ppp_device():
-        logger.error("PPP connection failed. Exiting.")
+    if not check_ppp_device(retries=5, interval=5):
+        logger.error("PPP connection failed after retries. Exiting.")
         return
     configure_default_route()
     configure_dns()

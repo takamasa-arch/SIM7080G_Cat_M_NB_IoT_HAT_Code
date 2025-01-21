@@ -6,6 +6,7 @@ from logging.handlers import TimedRotatingFileHandler
 from gpiozero import OutputDevice
 from time import sleep
 import argparse
+import subprocess
 
 # ログ設定
 log_file = "/var/log/sim7080x.log"
@@ -61,9 +62,59 @@ def initializeDataMode(apn, plmn):
     if sendCommand('AT+CNACT?', "OK"):
         logger.info('SIM7080X is ready for data mode.')
 
+def configureNetworkManager(apn, connection_name="SIM7080X", device="/dev/ttyAMA0"):
+    logger.info(f"Creating NetworkManager profile: {connection_name} with APN: {apn}")
+
+    # Step 4: Create a NetworkManager profile
+    try:
+        logger.info(f"Deleting existing NetworkManager profile: {connection_name}")
+        subprocess.run(
+            ["sudo", "nmcli", "connection", "delete", connection_name],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False
+        )
+        logger.info("Adding new NetworkManager profile")
+        subprocess.run(
+            ["sudo", "nmcli", "connection", "add", "type", "gsm",
+             "ifname", device, "con-name", connection_name,
+             "apn", apn, "gsm.num", "*99#", "gsm.username", "", "gsm.password", ""],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True
+        )
+    except subprocess.CalledProcessError as e:
+        logger.error(f"Failed to configure NetworkManager: {e}")
+        return False
+
+    # Step 5: Activate the connection
+    try:
+        logger.info(f"Activating NetworkManager connection: {connection_name}")
+        result = subprocess.run(
+            ["sudo", "nmcli", "connection", "up", connection_name],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True
+        )
+        logger.info(f"NetworkManager output: {result.stdout.decode().strip()}")
+    except subprocess.CalledProcessError as e:
+        logger.error(f"Failed to activate NetworkManager connection: {e}")
+        return False
+
+    # Step 6: Verify the connection
+    try:
+        logger.info("Verifying the internet connection with ping")
+        subprocess.run(
+            ["ping", "-c", "4", "8.8.8.8"],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True
+        )
+        logger.info("Internet connection successfully established.")
+        return True
+    except subprocess.CalledProcessError as e:
+        logger.error(f"Failed to establish internet connection: {e}")
+        return False
+
 def main(apn, plmn):
     powerOn(powerKey)
     initializeDataMode(apn, plmn)
+    if configureNetworkManager(apn):
+        logger.info("NetworkManager configuration and connection successful.")
+    else:
+        logger.error("NetworkManager configuration or connection failed.")
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Initialize SIM7080X for data mode")

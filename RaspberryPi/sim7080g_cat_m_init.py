@@ -4,6 +4,7 @@ import os
 import subprocess
 import logging
 from time import sleep
+import time  # timeモジュールをインポート
 
 # ログ設定
 log_file = "/var/log/sim7080g_pppd.log"

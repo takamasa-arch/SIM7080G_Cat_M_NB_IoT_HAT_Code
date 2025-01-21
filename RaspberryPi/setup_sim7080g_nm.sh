@@ -51,8 +51,8 @@ log "Connection name: $CON_NAME"
 
 # Check for required commands
 log "Checking for required commands..."
-check_command "nmcli"
-check_command "stty"
+check_command "sudo nmcli"
+check_command "sudo stty"
 
 # Step 1: Initialize the serial port
 log "Initializing the serial port ($DEVICE)..."
@@ -72,13 +72,13 @@ send_at_command "AT+CPSI?"           # Check the current state
 
 # Step 3: Create a NetworkManager profile
 log "Creating a NetworkManager profile ($CON_NAME)..."
-nmcli connection delete "$CON_NAME" 2>/dev/null # Delete existing profile if it exists
-nmcli connection add type gsm ifname "$DEVICE" con-name "$CON_NAME" apn "$APN" \
+sudo nmcli connection delete "$CON_NAME" 2>/dev/null # Delete existing profile if it exists
+sudo nmcli connection add type gsm ifname "$DEVICE" con-name "$CON_NAME" apn "$APN" \
     gsm.num "*99#" gsm.username "" gsm.password ""
 
 # Step 4: Activate the connection
 log "Activating the connection with NetworkManager ($CON_NAME)..."
-nmcli connection up "$CON_NAME" || { log "Error: Failed to activate the connection."; exit 1; }
+sudo nmcli connection up "$CON_NAME" || { log "Error: Failed to activate the connection."; exit 1; }
 
 # Step 5: Verify the connection
 log "Verifying the connection..."

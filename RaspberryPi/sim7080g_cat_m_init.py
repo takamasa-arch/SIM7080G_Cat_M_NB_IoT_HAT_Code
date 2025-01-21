@@ -120,6 +120,42 @@ def disconnect():
         logger.error(f"Failed to stop PPP connection: {e.stderr.decode()}")
         raise
 
+def configure_default_route():
+    """
+    Ensure the default route is set for PPP connection
+    """
+    try:
+        logger.info("Checking default route configuration...")
+        result = subprocess.run(["ip", "route"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+        routes = result.stdout.decode()
+        if "default via" not in routes:
+            logger.info("Default route not found. Adding default route via ppp0.")
+            subprocess.run(["sudo", "ip", "route", "add", "default", "dev", "ppp0"], check=True)
+            logger.info("Default route added.")
+        else:
+            logger.info("Default route is already configured.")
+    except Exception as e:
+        logger.error(f"Failed to configure default route: {e}")
+
+def configure_dns():
+    """
+    Configure DNS if not set properly
+    """
+    try:
+        logger.info("Checking DNS configuration...")
+        with open("/etc/resolv.conf", "r") as resolv_file:
+            content = resolv_file.read()
+            if "nameserver" not in content:
+                logger.info("DNS is not configured. Adding Google Public DNS.")
+                with open("/etc/resolv.conf", "a") as resolv_file_write:
+                    resolv_file_write.write("nameserver 8.8.8.8\n")
+                logger.info("Google Public DNS added to /etc/resolv.conf")
+            else:
+                logger.info("DNS is already configured.")
+    except Exception as e:
+        logger.error(f"Failed to configure DNS: {e}")
+
+
 def main(apn, plmn):
     """
     Main function to power on the modem, set up PPP, and establish connection
@@ -127,6 +163,8 @@ def main(apn, plmn):
     power_on_modem()
     setup_ppp_files(apn, plmn)
     connect()
+    configure_default_route()
+    configure_dns()
     logger.info("PPP connection established. You can now access the internet.")
 
 if __name__ == "__main__":

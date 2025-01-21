@@ -17,10 +17,11 @@ log() {
     echo "$(date '+%Y-%m-%d %H:%M:%S') - $1"
 }
 
-# Check if a required command is available
+# Check if a required command is available (with sudo support)
 check_command() {
-    if ! command -v "$1" &>/dev/null; then
-        log "Error: '$1' command not found. Please install it."
+    local COMMAND="$1"
+    if ! sudo -n command -v "$COMMAND" &>/dev/null; then
+        log "Error: '$COMMAND' command not found or not accessible. Please install it."
         exit 1
     fi
 }
@@ -51,12 +52,12 @@ log "Connection name: $CON_NAME"
 
 # Check for required commands
 log "Checking for required commands..."
-check_command "sudo nmcli"
-check_command "sudo stty"
+check_command "nmcli"
+check_command "stty"
 
 # Step 1: Initialize the serial port
 log "Initializing the serial port ($DEVICE)..."
-stty -F $DEVICE $BAUDRATE cs8 -cstopb -parenb || { log "Error: Failed to initialize the serial port."; exit 1; }
+sudo stty -F $DEVICE $BAUDRATE cs8 -cstopb -parenb || { log "Error: Failed to initialize the serial port."; exit 1; }
 
 # Step 2: Initialize the module
 log "Initializing the module..."

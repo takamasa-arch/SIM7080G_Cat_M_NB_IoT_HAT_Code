@@ -19,6 +19,9 @@ sudo stty -F $DEVICE $BAUDRATE cs8 -cstopb -parenb -icanon min 1 time 1 || {
     exit 1
 }
 
+# Wait for the response
+sleep 1
+
 # Send the AT command
 echo -ne "$COMMAND\r" > $DEVICE
 

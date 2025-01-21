@@ -128,13 +128,13 @@ def configure_default_route():
         logger.info("Checking default route configuration...")
         result = subprocess.run(["ip", "route"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
         routes = result.stdout.decode()
-        if "default via" not in routes:
+        if "ppp0" in routes:
+            logger.info("Default route via ppp0 already exists.")
+        else:
             logger.info("Default route not found. Adding default route via ppp0.")
             subprocess.run(["sudo", "ip", "route", "add", "default", "dev", "ppp0"], check=True)
             logger.info("Default route added.")
-        else:
-            logger.info("Default route is already configured.")
-    except Exception as e:
+    except subprocess.CalledProcessError as e:
         logger.error(f"Failed to configure default route: {e}")
 
 def configure_dns():
@@ -154,6 +154,30 @@ def configure_dns():
     except subprocess.CalledProcessError as e:
         logger.error(f"Failed to configure DNS: {e}")
 
+def wait_for_modem_ready(timeout=60):
+    """
+    Wait for the modem to be ready (e.g., connected to a network).
+    """
+    logger.info("Waiting for modem to be ready...")
+    try:
+        start_time = time.time()
+        while time.time() - start_time < timeout:
+            result = subprocess.run(
+                ["echo -e 'AT+CPSI?\\r' > /dev/ttyAMA0 && timeout 1 cat /dev/ttyAMA0"],
+                shell=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True
+            )
+            response = result.stdout
+            if "READY" in response or "Online" in response:  # 状態が READY または Online になるまで待機
+                logger.info("Modem is ready.")
+                return
+            sleep(5)  # 5秒待機して再試行
+        logger.error("Timeout waiting for modem to be ready.")
+    except Exception as e:
+        logger.error(f"Error while waiting for modem readiness: {e}")
+        raise
 
 def check_ppp_device():
     """
@@ -176,6 +200,7 @@ def main(apn, plmn):
     Main function to power on the modem, set up PPP, and establish connection
     """
     power_on_modem()
+    wait_for_modem_ready()
     setup_ppp_files(apn, plmn)
     connect()
     if not check_ppp_device():

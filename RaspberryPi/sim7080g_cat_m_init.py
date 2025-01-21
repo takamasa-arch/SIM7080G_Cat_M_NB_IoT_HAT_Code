@@ -147,14 +147,29 @@ def configure_dns():
             content = resolv_file.read()
             if "nameserver" not in content:
                 logger.info("DNS is not configured. Adding Google Public DNS.")
-                with open("/etc/resolv.conf", "a") as resolv_file_write:
-                    resolv_file_write.write("nameserver 8.8.8.8\n")
+                subprocess.run(["sudo", "sh", "-c", "echo 'nameserver 8.8.8.8' > /etc/resolv.conf"], check=True)
                 logger.info("Google Public DNS added to /etc/resolv.conf")
             else:
                 logger.info("DNS is already configured.")
-    except Exception as e:
+    except subprocess.CalledProcessError as e:
         logger.error(f"Failed to configure DNS: {e}")
 
+
+def check_ppp_device():
+    """
+    Check if ppp0 device is available
+    """
+    try:
+        logger.info("Checking if ppp0 device is available...")
+        result = subprocess.run(["ifconfig", "ppp0"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        if result.returncode != 0:
+            logger.error("ppp0 device not found. PPP connection might have failed.")
+            return False
+        logger.info("ppp0 device is available.")
+        return True
+    except Exception as e:
+        logger.error(f"Error checking ppp0 device: {e}")
+        return False
 
 def main(apn, plmn):
     """
@@ -163,6 +178,9 @@ def main(apn, plmn):
     power_on_modem()
     setup_ppp_files(apn, plmn)
     connect()
+    if not check_ppp_device():
+        logger.error("PPP connection failed. Exiting.")
+        return
     configure_default_route()
     configure_dns()
     logger.info("PPP connection established. You can now access the internet.")

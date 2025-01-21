@@ -17,15 +17,6 @@ log() {
     echo "$(date '+%Y-%m-%d %H:%M:%S') - $1"
 }
 
-# Check if a required command is available (with sudo support)
-check_command() {
-    local COMMAND="$1"
-    if ! sudo -n command -v "$COMMAND" &>/dev/null; then
-        log "Error: '$COMMAND' command not found or not accessible. Please install it."
-        exit 1
-    fi
-}
-
 # Send an AT command and check the response
 send_at_command() {
     local COMMAND="$1"
@@ -49,11 +40,6 @@ log "Configuring SIM7080G with NetworkManager..."
 log "Using APN: $APN"
 log "Using PLMN: $PLMN"
 log "Connection name: $CON_NAME"
-
-# Check for required commands
-log "Checking for required commands..."
-check_command "nmcli"
-check_command "stty"
 
 # Step 1: Initialize the serial port
 log "Initializing the serial port ($DEVICE)..."

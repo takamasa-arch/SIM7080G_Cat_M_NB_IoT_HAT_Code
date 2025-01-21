@@ -62,7 +62,7 @@ def initializeDataMode(apn, plmn):
     if sendCommand('AT+CNACT?', "OK"):
         logger.info('SIM7080X is ready for data mode.')
 
-def configureNetworkManager(apn, connection_name="SIM7080X", device="/dev/ttyAMA0"):
+def configureNetworkManager(apn, connection_name="1NCE", device="/dev/ttyAMA0"):
     logger.info(f"Creating NetworkManager profile: {connection_name} with APN: {apn}")
 
     # Step 4: Create a NetworkManager profile
@@ -108,10 +108,10 @@ def configureNetworkManager(apn, connection_name="SIM7080X", device="/dev/ttyAMA
         logger.error(f"Failed to establish internet connection: {e}")
         return False
 
-def main(apn, plmn):
+def main(apn, plmn, connection_name):
     powerOn(powerKey)
     initializeDataMode(apn, plmn)
-    if configureNetworkManager(apn):
+    if configureNetworkManager(apn, connection_name):
         logger.info("NetworkManager configuration and connection successful.")
     else:
         logger.error("NetworkManager configuration or connection failed.")
@@ -120,6 +120,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Initialize SIM7080X for data mode")
     parser.add_argument('--apn', type=str, default="iot.1nce.net", help="APN (default: iot.1nce.net)")
     parser.add_argument('--plmn', type=str, default="44020", help="PLMN (default: 44020)")
+    parser.add_argument('--connection_name', type=str, default="1NCE", help="Connection name (default: 1NCE)")
     args = parser.parse_args()
 
-    main(args.apn, args.plmn)
+    main(args.apn, args.plmn, args.connection_name)

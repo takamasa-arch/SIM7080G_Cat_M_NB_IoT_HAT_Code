@@ -21,11 +21,7 @@ log() {
 # Function to power on the module using gpiod
 power_on() {
     log "Starting SIM7080G module power-on sequence..."
-    # Ensure gpioset is installed
-    if ! command -v gpioset &> /dev/null; then
-        log "Error: gpioset is not installed. Install it with 'sudo apt install gpiod'."
-        exit 1
-    fi
+
     # Activate the power key using gpioset
     gpioset gpiochip0 $POWER_KEY_GPIO=1
     sleep 1

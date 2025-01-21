@@ -180,7 +180,7 @@ def wait_for_modem_ready(timeout=60):
         logger.error(f"Error while waiting for modem readiness: {e}")
         raise
 
-def check_ppp_device(retries=5, interval=5):
+def check_ppp_device(retries=10, interval=5):
     """
     Check if ppp0 device is available, retrying if necessary.
 

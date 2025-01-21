@@ -14,7 +14,11 @@ if [ -z "$COMMAND" ]; then
 fi
 
 # Send the AT command and capture the response
-RESPONSE=$(echo -ne "$COMMAND\r" | sudo minicom -b $BAUDRATE -D $DEVICE -o 2>/dev/null)
+echo -ne "$COMMAND\r" | sudo minicom -b $BAUDRATE -D $DEVICE -o &
+sleep 1  # Wait for the response to be ready
+
+# Capture the response from the serial port
+RESPONSE=$(cat $DEVICE)
 
 # Display the response
 echo "Response:"

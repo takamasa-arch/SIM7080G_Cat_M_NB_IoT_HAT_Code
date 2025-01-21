@@ -13,23 +13,26 @@ if [ -z "$COMMAND" ]; then
     exit 1
 fi
 
+# Ensure no other process is using the serial port
+if lsof $DEVICE &>/dev/null; then
+    echo "Error: Serial port $DEVICE is currently in use."
+    exit 1
+fi
+
 # Configure the serial port
 sudo stty -F $DEVICE $BAUDRATE cs8 -cstopb -parenb -icanon min 1 time 1 || {
     echo "Failed to configure serial port $DEVICE"
     exit 1
 }
 
-# Wait for the response
-sleep 1
-
 # Send the AT command
 echo -ne "$COMMAND\r" > $DEVICE
 
 # Wait for the response
-sleep 1
+sleep 2
 
-# Read the response
-RESPONSE=$(timeout 2 cat $DEVICE)
+# Capture the response
+RESPONSE=$(cat $DEVICE)
 
 # Display the response
 echo "Response:"

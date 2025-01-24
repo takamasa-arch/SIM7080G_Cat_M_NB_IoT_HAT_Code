@@ -4,7 +4,7 @@ import os
 import subprocess
 import logging
 from time import sleep
-import time  # timeモジュールをインポート
+import time
 
 # ログ設定
 log_file = "/var/log/sim7080g_pppd.log"
@@ -12,8 +12,8 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s",
     handlers=[
-        logging.FileHandler(log_file),  # ファイルにログを記録
-        logging.StreamHandler()        # 標準出力にログを表示
+        logging.FileHandler(log_file),
+        logging.StreamHandler()
     ]
 )
 
@@ -49,10 +49,8 @@ def setup_ppp_files(apn, plmn):
     """
     logger.info("Setting up PPP configuration files...")
     try:
-        # PPP peers file
         with open(PPP_PEER_FILE, "w") as ppp_file:
-            ppp_file.write(f"""
-/dev/ttyAMA0 9600
+            ppp_file.write(f"""/dev/ttyAMA0 9600
 connect '/usr/sbin/chat -v -f {CHAT_CONNECT_FILE}'
 disconnect '/usr/sbin/chat -v -f {CHAT_DISCONNECT_FILE}'
 noauth
@@ -64,10 +62,8 @@ password ""
 """)
         logger.info("PPP peers file created.")
 
-        # Chat connect file
         with open(CHAT_CONNECT_FILE, "w") as connect_file:
-            connect_file.write(f"""
-ABORT 'BUSY'
+            connect_file.write(f"""ABORT 'BUSY'
 ABORT 'NO CARRIER'
 ABORT 'ERROR'
 ABORT 'NO DIALTONE'
@@ -80,17 +76,14 @@ CONNECT ''
 """)
         logger.info("Chat connect file created.")
 
-        # Chat disconnect file
         with open(CHAT_DISCONNECT_FILE, "w") as disconnect_file:
-            disconnect_file.write("""
-ABORT 'ERROR'
+            disconnect_file.write("""ABORT 'ERROR'
 '' +++
 SAY "Disconnecting the modem\n"
 '' ATH
 OK
 """)
         logger.info("Chat disconnect file created.")
-
     except Exception as e:
         logger.error(f"Error setting up PPP files: {e}")
         raise
@@ -171,50 +164,23 @@ def wait_for_modem_ready(timeout=60):
                 text=True
             )
             response = result.stdout
-            if "READY" in response or "Online" in response:  # 状態が READY または Online になるまで待機
+            if "READY" in response or "Online" in response:
                 logger.info("Modem is ready.")
                 return
-            sleep(5)  # 5秒待機して再試行
+            sleep(5)
         logger.error("Timeout waiting for modem to be ready.")
     except Exception as e:
         logger.error(f"Error while waiting for modem readiness: {e}")
         raise
 
-def check_ppp_device(retries=10, interval=5):
-    """
-    Check if ppp0 device is available, retrying if necessary.
-
-    Args:
-        retries (int): Number of retries before giving up.
-        interval (int): Time in seconds between retries.
-    """
-    logger.info("Checking if ppp0 device is available...")
-    for attempt in range(1, retries + 1):
-        try:
-            result = subprocess.run(["ifconfig", "ppp0"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            if result.returncode == 0:
-                logger.info(f"ppp0 device is available (Attempt {attempt}/{retries}).")
-                return True
-            else:
-                logger.warning(f"ppp0 device not found. Retrying in {interval} seconds... (Attempt {attempt}/{retries})")
-                sleep(interval)
-        except Exception as e:
-            logger.error(f"Error checking ppp0 device: {e}")
-            return False
-    logger.error("ppp0 device not found after retries. PPP connection might have failed.")
-    return False
-
-def main(apn, plmn):
+def main(apn, plmn, timeout=60):
     """
     Main function to power on the modem, set up PPP, and establish connection
     """
     power_on_modem()
-    wait_for_modem_ready()
+    wait_for_modem_ready(timeout)
     setup_ppp_files(apn, plmn)
     connect()
-    if not check_ppp_device(retries=5, interval=5):
-        logger.error("PPP connection failed after retries. Exiting.")
-        return
     configure_default_route()
     configure_dns()
     logger.info("PPP connection established. You can now access the internet.")
@@ -226,9 +192,10 @@ if __name__ == "__main__":
     parser.add_argument("--apn", type=str, default="iot.1nce.net", help="APN for the PPP connection (default: iot.1nce.net)")
     parser.add_argument("--plmn", type=str, default="44020", help="PLMN for the PPP connection (default: 44020)")
     parser.add_argument("--disconnect", action="store_true", help="Disconnect the PPP connection")
+    parser.add_argument("--timeout", type=int, default=60, help="Timeout in seconds for modem readiness (default: 60)")
     args = parser.parse_args()
 
     if args.disconnect:
         disconnect()
     else:
-        main(args.apn, args.plmn)
+        main(args.apn, args.plmn, args.timeout)

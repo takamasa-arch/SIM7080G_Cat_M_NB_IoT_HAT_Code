@@ -237,15 +237,15 @@ def wait_for_modem_ready(ser, timeout=60):
 
     while time.time() - start_time < timeout:
         # AT+CGDCONT? でAPNの設定確認
-        response_cgdc = send_at_command(ser, "AT+CGDCONT?")
+        response_cgdc = send_at_command("AT+CGDCONT?", ser)
         logger.debug(f"AT+CGDCONT response: {response_cgdc}")
 
         # AT+COPS? でネットワーク登録状況を確認
-        response_cops = send_at_command(ser, "AT+COPS?")
+        response_cops = send_at_command("AT+COPS?", ser)
         logger.debug(f"AT+COPS response: {response_cops}")
 
         # AT+CPSI? で現在の接続状態を確認
-        response_cpsi = send_at_command(ser, "AT+CPSI?")
+        response_cpsi = send_at_command("AT+CPSI?", ser)
         logger.debug(f"AT+CPSI response: {response_cpsi}")
 
         # 条件を満たす場合はモデムが準備完了と判断

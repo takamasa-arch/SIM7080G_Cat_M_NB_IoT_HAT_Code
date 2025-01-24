@@ -210,7 +210,6 @@ def initialize_modem(ser, apn, plmn):
         ("AT+CMNB=1", "OK"),  # LTE Cat-M1モード設定
         (f'AT+CGDCONT=1,"IP","{apn}"', "OK"),  # APN設定
         (f'AT+COPS=1,2,"{plmn}"', "OK"),  # PLMN設定
-        ("AT+CNACT=0,1", "OK")  # アクティブネットワークの有効化
     ]
 
     for cmd, expected in commands:

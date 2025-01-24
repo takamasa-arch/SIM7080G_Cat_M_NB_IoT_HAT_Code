@@ -4,6 +4,7 @@ import os
 import subprocess
 import logging
 from time import sleep
+import serial  # pyserialを使用
 import time
 
 # ログ設定
@@ -19,7 +20,7 @@ logging.basicConfig(
 
 logger = logging.getLogger("SIM7080G_PPPD")
 
-# PPP 接続用の設定ファイルパス
+# 設定ファイルパス
 PPP_PEER_FILE = "/etc/ppp/peers/sim7080g"
 CHAT_CONNECT_FILE = "/etc/chatscripts/chat-connect"
 CHAT_DISCONNECT_FILE = "/etc/chatscripts/chat-disconnect"
@@ -27,9 +28,29 @@ CHAT_DISCONNECT_FILE = "/etc/chatscripts/chat-disconnect"
 # GPIO ピン番号 (BCM モード)
 POWER_KEY_GPIO = 4
 
+def send_at_command(command, port="/dev/ttyAMA0", baudrate=9600, timeout=5, response_delay=1):
+    """
+    モデムにATコマンドを送信し、応答を取得する。
+    """
+    try:
+        with serial.Serial(port, baudrate, timeout=timeout) as ser:
+            ser.reset_input_buffer()  # 受信バッファのクリア
+            logger.debug(f"Sending AT command: {command}")
+            ser.write((command + "\r").encode())  # コマンド送信
+            sleep(response_delay)  # 応答を待つ
+            response = ser.read(100).decode(errors='ignore')  # 応答の読み取り（エラー無視でデコード）
+            logger.debug(f"AT command response: {response.strip()}")
+            return response.strip()
+    except serial.SerialException as e:
+        logger.error(f"Serial exception: {e}")
+        return ""
+    except Exception as e:
+        logger.error(f"Failed to send AT command: {command}, error: {e}")
+        return ""
+
 def power_on_modem():
     """
-    Power on the SIM7080G module using GPIO
+    SIM7080Gモジュールの電源を入れる
     """
     try:
         from gpiozero import OutputDevice
@@ -41,11 +62,12 @@ def power_on_modem():
         sleep(5)
         logger.info("Power-on sequence completed.")
     except ImportError:
-        logger.warning("gpiozero module not found. Skipping power-on step.")
+        logger.error("gpiozero module not found. Cannot power on the modem.")
+        raise SystemExit("Exiting: gpiozero module is required for GPIO control.")
 
 def setup_ppp_files(apn, plmn):
     """
-    Create PPP and chat script files for the SIM7080G connection
+    PPPおよびチャットスクリプトファイルを作成
     """
     logger.info("Setting up PPP configuration files...")
     try:
@@ -84,13 +106,14 @@ SAY "Disconnecting the modem\n"
 OK
 """)
         logger.info("Chat disconnect file created.")
+
     except Exception as e:
         logger.error(f"Error setting up PPP files: {e}")
         raise
 
 def connect():
     """
-    Establish a PPP connection using pppd
+    PPP接続を確立
     """
     logger.info("Starting PPP connection...")
     try:
@@ -103,7 +126,7 @@ def connect():
 
 def disconnect():
     """
-    Terminate the PPP connection using pppd
+    PPP接続を終了
     """
     logger.info("Stopping PPP connection...")
     try:
@@ -114,76 +137,55 @@ def disconnect():
         logger.error(f"Failed to stop PPP connection: {e.stderr.decode()}")
         raise
 
-def configure_default_route():
+def wait_for_modem_ready(timeout):
     """
-    Ensure the default route is set for PPP connection
-    """
-    try:
-        logger.info("Checking default route configuration...")
-        result = subprocess.run(["ip", "route"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
-        routes = result.stdout.decode()
-        if "ppp0" in routes:
-            logger.info("Default route via ppp0 already exists.")
-        else:
-            logger.info("Default route not found. Adding default route via ppp0.")
-            subprocess.run(["sudo", "ip", "route", "add", "default", "dev", "ppp0"], check=True)
-            logger.info("Default route added.")
-    except subprocess.CalledProcessError as e:
-        logger.error(f"Failed to configure default route: {e}")
-
-def configure_dns():
-    """
-    Configure DNS if not set properly
-    """
-    try:
-        logger.info("Checking DNS configuration...")
-        with open("/etc/resolv.conf", "r") as resolv_file:
-            content = resolv_file.read()
-            if "nameserver" not in content:
-                logger.info("DNS is not configured. Adding Google Public DNS.")
-                subprocess.run(["sudo", "sh", "-c", "echo 'nameserver 8.8.8.8' > /etc/resolv.conf"], check=True)
-                logger.info("Google Public DNS added to /etc/resolv.conf")
-            else:
-                logger.info("DNS is already configured.")
-    except subprocess.CalledProcessError as e:
-        logger.error(f"Failed to configure DNS: {e}")
-
-def wait_for_modem_ready(timeout=60):
-    """
-    Wait for the modem to be ready (e.g., connected to a network).
+    モデムが準備完了するまで待機
     """
     logger.info("Waiting for modem to be ready...")
-    try:
-        start_time = time.time()
-        while time.time() - start_time < timeout:
-            result = subprocess.run(
-                ["echo -e 'AT+CPSI?\\r' > /dev/ttyAMA0 && timeout 1 cat /dev/ttyAMA0"],
-                shell=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True
-            )
-            response = result.stdout
-            if "READY" in response or "Online" in response:
-                logger.info("Modem is ready.")
-                return
-            sleep(5)
-        logger.error("Timeout waiting for modem to be ready.")
-    except Exception as e:
-        logger.error(f"Error while waiting for modem readiness: {e}")
-        raise
+    start_time = time.time()
+    while time.time() - start_time < timeout:
+        response = send_at_command("AT+CPSI?")
+        logger.debug(f"Modem response: {response}")
+        if "Online" in response or "READY" in response:
+            logger.info("Modem is ready.")
+            return True
+        sleep(5)
+    logger.error("Timeout waiting for modem to be ready.")
+    return False
 
-def main(apn, plmn, timeout=60):
+def check_ppp_device(retries=10, interval=5):
     """
-    Main function to power on the modem, set up PPP, and establish connection
+    ppp0デバイスの存在をチェック（オプション）
+    """
+    logger.info("Checking if ppp0 device is available...")
+    try:
+        for attempt in range(1, retries + 1):
+            result = subprocess.run(["ifconfig", "ppp0"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            if result.returncode == 0:
+                logger.info(f"ppp0 device is available (Attempt {attempt}/{retries}).")
+                return True
+            logger.warning(f"ppp0 device not found. Retrying in {interval} seconds... (Attempt {attempt}/{retries})")
+            sleep(interval)
+    except KeyboardInterrupt:
+        logger.warning("Check for ppp0 device interrupted by user.")
+        return False
+    logger.error("ppp0 device not found after retries.")
+    return False
+
+def main(apn, plmn, retries, timeout):
+    """
+    メイン関数：モデム起動、PPP設定、接続の順に実行
     """
     power_on_modem()
-    wait_for_modem_ready(timeout)
+    if not wait_for_modem_ready(timeout):
+        logger.error("Modem did not become ready in time.")
+        raise SystemExit(1)
     setup_ppp_files(apn, plmn)
     connect()
-    configure_default_route()
-    configure_dns()
-    logger.info("PPP connection established. You can now access the internet.")
+    if retries > 0 and not check_ppp_device(retries=retries, interval=5):
+        logger.error("PPP connection failed after retries.")
+        return
+    logger.info("PPP connection established successfully.")
 
 if __name__ == "__main__":
     import argparse
@@ -192,10 +194,11 @@ if __name__ == "__main__":
     parser.add_argument("--apn", type=str, default="iot.1nce.net", help="APN for the PPP connection (default: iot.1nce.net)")
     parser.add_argument("--plmn", type=str, default="44020", help="PLMN for the PPP connection (default: 44020)")
     parser.add_argument("--disconnect", action="store_true", help="Disconnect the PPP connection")
+    parser.add_argument("--retries", type=int, default=10, help="Number of retries for ppp0 device check (default: 10, 0 for unlimited)")
     parser.add_argument("--timeout", type=int, default=60, help="Timeout in seconds for modem readiness (default: 60)")
     args = parser.parse_args()
 
     if args.disconnect:
         disconnect()
     else:
-        main(args.apn, args.plmn, args.timeout)
+        main(args.apn, args.plmn, args.retries, args.timeout)

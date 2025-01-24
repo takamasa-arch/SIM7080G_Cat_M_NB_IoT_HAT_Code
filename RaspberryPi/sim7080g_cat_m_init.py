@@ -219,12 +219,6 @@ def initialize_modem(ser, apn, plmn):
             logger.error(f"Command '{cmd}' failed. Expected '{expected}' but got: '{response}'")
             return False
 
-    # IPアドレスの確認
-    ip_info = send_at_command("AT+CNACT?", ser)
-    if "0,1" not in ip_info:
-        logger.error(f"Failed to retrieve IP address: {ip_info}")
-        return False
-
     logger.info("Modem initialized successfully and ready for network connection.")
     return True
 

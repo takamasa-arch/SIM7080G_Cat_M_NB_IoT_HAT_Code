@@ -154,90 +154,53 @@ def configure_dns():
     except subprocess.CalledProcessError as e:
         logger.error(f"Failed to configure DNS: {e}")
 
-def send_at_command(command, port="/dev/ttyAMA0", baudrate=9600, timeout=5, response_delay=1):
+def send_at_command(command, ser, retries=3, response_delay=1):
     """
-    モデムにATコマンドを送信し、応答を取得する。
+    モデムにATコマンドを送信し、応答を取得する
     """
-    try:
-        with serial.Serial(port, baudrate, timeout=timeout) as ser:
-            ser.reset_input_buffer()  # 受信バッファのクリア
-            logger.debug(f"Sending AT command: {command}")
-            ser.write((command + "\r").encode())  # コマンド送信
-            sleep(response_delay)  # 応答を待つ
-            response = ser.read(100).decode(errors='ignore')  # 応答の読み取り（エラー無視でデコード）
-            logger.debug(f"AT command response: {response.strip()}")
-            return response.strip()
-    except serial.SerialException as e:
-        logger.error(f"Serial exception: {e}")
-        return ""
-    except Exception as e:
-        logger.error(f"Failed to send AT command: {command}, error: {e}")
-        return ""
+    for attempt in range(retries):
+        try:
+            ser.reset_input_buffer()
+            logger.debug(f"Sending AT command (Attempt {attempt + 1}/{retries}): {command}")
+            ser.write((command + "\r\n").encode())
+            sleep(response_delay)
+            if ser.in_waiting > 0:
+                response = ser.read(ser.in_waiting).decode(errors='ignore')
+                logger.debug(f"AT command response: {response.strip()}")
+                return response.strip()
+        except Exception as e:
+            logger.error(f"Error sending AT command '{command}': {e}")
+    logger.error(f"No response for command '{command}' after {retries} retries.")
+    return ""
 
-def initialize_modem(apn, plmn):
+def initialize_modem(ser, apn, plmn):
     """
     モデムを初期化し、ネットワーク接続を準備する
-    Args:
-        apn (str): APN設定
-        plmn (str): PLMN設定
-    Returns:
-        bool: 初期化成功ならTrue、失敗ならFalse
     """
     logger.info("Initializing modem...")
 
-    # Step 1: ATコマンド応答確認
-    if "OK" not in send_at_command("AT"):
-        logger.error("Modem not responding to AT command.")
-        return False
+    commands = [
+        ("AT", "OK"),
+        ("AT+CPIN?", "+CPIN: READY"),
+        ("AT+CNMP=38", "OK"),
+        ("AT+CMNB=1", "OK"),
+        (f'AT+CGDCONT=1,"IP","{apn}"', "OK"),
+        ("AT+CNACT=0,1", "OK")
+    ]
 
-    # Step 2: SIMカード状態確認
-    if "+CPIN: READY" not in send_at_command("AT+CPIN?"):
-        logger.error("SIM card not ready or PIN required.")
-        return False
-
-    # Step 3: LTEモード設定
-    if "OK" not in send_at_command("AT+CNMP=38"):
-        logger.error("Failed to set LTE mode (AT+CNMP=38).")
-        return False
-
-    # Step 4: LTE Cat-Mネットワークの選択
-    if "OK" not in send_at_command("AT+CMNB=1"):
-        logger.error("Failed to set LTE Cat-M1 mode (AT+CMNB=1).")
-        return False
-
-    # Step 5: 信号強度の確認
-    signal_response = send_at_command("AT+CSQ")
-    logger.info(f"Signal strength: {signal_response}")
-
-    # Step 6: ネットワーク登録状況の確認
-    if "+CGREG: 0,1" not in send_at_command("AT+CGREG?"):
-        logger.error("Modem not registered to the network.")
-        return False
-
-    # Step 7: APN設定の確認または設定
-    if f'"{apn}"' not in send_at_command("AT+CGDCONT?"):
-        logger.info("APN not configured, setting APN...")
-        if "OK" not in send_at_command(f'AT+CGDCONT=1,"IP","{apn}"'):
-            logger.error("Failed to configure APN.")
+    for cmd, expected in commands:
+        if expected not in send_at_command(cmd, ser):
+            logger.error(f"Command '{cmd}' failed.")
             return False
 
-    # Step 8: ネットワーク状態確認
-    network_info = send_at_command("AT+CPSI?")
-    logger.info(f"Network information: {network_info}")
-
-    # Step 9: アプリケーションネットワークの有効化
-    if "OK" not in send_at_command("AT+CNACT=0,1"):
-        logger.error("Failed to activate application network.")
-        return False
-
-    # Step 10: IPアドレスの確認
-    ip_info = send_at_command("AT+CNACT?")
+    ip_info = send_at_command("AT+CNACT?", ser)
     if "0,1" not in ip_info:
         logger.error(f"Failed to retrieve IP address: {ip_info}")
         return False
 
     logger.info("Modem initialized successfully and ready for network connection.")
     return True
+
 
 def wait_for_modem_ready(timeout):
     """

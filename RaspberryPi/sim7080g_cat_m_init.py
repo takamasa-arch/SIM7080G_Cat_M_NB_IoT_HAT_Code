@@ -166,41 +166,61 @@ def send_at_command(command, ser, retries=3, response_delay=1):
     """
     モデムにATコマンドを送信し、応答を取得する
     """
-    for attempt in range(retries):
+    if not isinstance(ser, serial.Serial):
+        logger.error(f"'ser' is not a serial.Serial object. Received type: {type(ser)}")
+        return ""
+
+    for attempt in range(1, retries + 1):
         try:
-            ser.reset_input_buffer()
-            logger.debug(f"Sending AT command (Attempt {attempt + 1}/{retries}): {command}")
-            ser.write((command + "\r\n").encode())
-            sleep(response_delay)
+            ser.reset_input_buffer()  # バッファをクリア
+            logger.debug(f"Sending AT command (Attempt {attempt}/{retries}): {command}")
+            ser.write((command + "\r\n").encode())  # コマンド送信
+            sleep(response_delay)  # 応答待ち
+
+            # 応答を取得
             if ser.in_waiting > 0:
-                response = ser.read(ser.in_waiting).decode(errors='ignore')
-                logger.debug(f"AT command response: {response.strip()}")
-                return response.strip()
+                response = ser.read(ser.in_waiting).decode(errors='ignore').strip()
+                logger.debug(f"AT command response: {response}")
+                return response
+            else:
+                logger.warning(f"No response received for command '{command}' (Attempt {attempt}/{retries}).")
+
         except Exception as e:
-            logger.error(f"Error sending AT command '{command}': {e}")
-    logger.error(f"No response for command '{command}' after {retries} retries.")
+            logger.error(f"Error sending AT command '{command}' (Attempt {attempt}/{retries}): {e}")
+
+    logger.error(f"Failed to get a response for command '{command}' after {retries} attempts.")
     return ""
+
 
 def initialize_modem(ser, apn, plmn):
     """
     モデムを初期化し、ネットワーク接続を準備する
     """
+    if not isinstance(ser, serial.Serial):
+        logger.error(f"'ser' is not a serial.Serial object. Received type: {type(ser)}")
+        return False
+
     logger.info("Initializing modem...")
 
+    # 必須ATコマンドのリスト (コマンド, 期待する応答)
     commands = [
-        ("AT", "OK"),
-        ("AT+CPIN?", "+CPIN: READY"),
-        ("AT+CNMP=38", "OK"),
-        ("AT+CMNB=1", "OK"),
-        (f'AT+CGDCONT=1,"IP","{apn}"', "OK"),
-        ("AT+CNACT=0,1", "OK")
+        ("AT", "OK"),  # 基本的なAT応答確認
+        ("AT+CPIN?", "+CPIN: READY"),  # SIMカード状態確認
+        ("AT+CNMP=38", "OK"),  # LTEモード設定
+        ("AT+CMNB=1", "OK"),  # LTE Cat-M1モード設定
+        (f'AT+CGDCONT=1,"IP","{apn}"', "OK"),  # APN設定
+        (f'AT+COPS=1,2,"{plmn}"', "OK"),  # PLMN設定
+        ("AT+CNACT=0,1", "OK")  # アクティブネットワークの有効化
     ]
 
     for cmd, expected in commands:
-        if expected not in send_at_command(cmd, ser):
-            logger.error(f"Command '{cmd}' failed.")
+        logger.info(f"Sending command: {cmd}")
+        response = send_at_command(cmd, ser)
+        if expected not in response:
+            logger.error(f"Command '{cmd}' failed. Expected '{expected}' but got: '{response}'")
             return False
 
+    # IPアドレスの確認
     ip_info = send_at_command("AT+CNACT?", ser)
     if "0,1" not in ip_info:
         logger.error(f"Failed to retrieve IP address: {ip_info}")

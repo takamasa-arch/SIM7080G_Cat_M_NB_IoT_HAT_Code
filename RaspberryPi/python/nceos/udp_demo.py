@@ -1,17 +1,28 @@
 import socket
 import time
+import random
 
-M_SIZE = 1024
 FQDN = 'udp.os.1nce.com'
 PORT = 4445
-interval = 5  # Message sending interval (in seconds)
-dns_retry_interval = 30  # Interval to retry DNS resolution upon failure (in seconds)
+M_SIZE = 1024
+SEND_INTERVAL = 5  # seconds
+DNS_REFRESH_INTERVAL = 3600  # seconds (1h)
 
-# Initialization
-last_dns_attempt = 0
-resolved_ip = None
+resolved_ips = []
+ip_index = 0
+last_dns_refresh = 0
 
-# Create UDP socket and bind to an ephemeral port
+# Resolve all IP addresses for the FQDN
+def resolve_all_fqdn():
+    try:
+        all_ips = socket.gethostbyname_ex(FQDN)[2]
+        print(f"Resolved {FQDN} to {all_ips}")
+        return all_ips
+    except socket.error as e:
+        print(f"DNS resolution failed: {e}")
+        return []
+
+# Initialize socket
 try:
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.bind(('', 0))
@@ -21,55 +32,47 @@ except socket.error as e:
     print(f"Socket creation or bind failed: {e}")
     exit(1)
 
-# Set receive timeout to match the sending interval
-sock.settimeout(interval)
+sock.settimeout(SEND_INTERVAL)
 
-def resolve_fqdn():
-    """Resolve FQDN to IP address"""
-    try:
-        ip = socket.gethostbyname(FQDN)
-        print(f"Resolved {FQDN} to {ip}")
-        return ip
-    except socket.error as e:
-        print(f"DNS resolution failed: {e}")
-        return None
-
-# Perform initial DNS resolution
-resolved_ip = resolve_fqdn()
-serv_address = (resolved_ip, PORT) if resolved_ip else None
+# Initial DNS resolution
+resolved_ips = resolve_all_fqdn()
+last_dns_refresh = time.time()
 
 try:
     while True:
+        # Refresh DNS if interval has passed
         now = time.time()
+        if now - last_dns_refresh > DNS_REFRESH_INTERVAL:
+            resolved_ips = resolve_all_fqdn()
+            last_dns_refresh = now
+            ip_index = 0  # Reset round-robin
 
-        # Retry DNS resolution every `dns_retry_interval` seconds if IP is invalid
-        if not resolved_ip or (now - last_dns_attempt > dns_retry_interval):
-            last_dns_attempt = now
-            new_ip = resolve_fqdn()
-            if new_ip:
-                resolved_ip = new_ip
-                serv_address = (resolved_ip, PORT)
+        if not resolved_ips:
+            print("No valid IPs available. Retrying DNS...")
+            time.sleep(5)
+            continue
 
-        if serv_address:
-            try:
-                message = str(local_port)
-                sent_bytes = sock.sendto(message.encode('utf-8'), serv_address)
-                if sent_bytes != len(message):
-                    print("Number of bytes sent does not match expected length.")
-                print(f"Sent local port {message} to server ({resolved_ip}).")
-            except socket.error as e:
-                print(f"Error sending message to {serv_address}: {e}")
-                resolved_ip = None  # Invalidate IP to trigger DNS retry
+        # Select IP by round-robin
+        current_ip = resolved_ips[ip_index % len(resolved_ips)]
+        serv_address = (current_ip, PORT)
+
+        try:
+            message = str(local_port)
+            sent_bytes = sock.sendto(message.encode('utf-8'), serv_address)
+            print(f"Sent local port {message} to server ({current_ip}).")
+        except socket.error as e:
+            print(f"Error sending message to {serv_address}: {e}")
 
         try:
             rx_message, addr = sock.recvfrom(M_SIZE)
             print(f"[Server {addr}]: {rx_message.decode('utf-8')}")
         except socket.timeout:
-            pass  # Do not display timeout messages
+            print(f"No response from {current_ip}, trying next IP...")
+            ip_index += 1  # Move to next IP if no response
         except socket.error as e:
             print(f"Error during message reception: {e}")
 
-        time.sleep(interval)
+        time.sleep(SEND_INTERVAL)
 
 except KeyboardInterrupt:
     print("\nInterrupted by user.")

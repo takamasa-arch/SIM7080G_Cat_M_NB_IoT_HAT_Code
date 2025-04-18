@@ -1,18 +1,18 @@
 import socket
 import time
-import random
 
 FQDN = 'udp.os.1nce.com'
 PORT = 4445
 M_SIZE = 1024
-SEND_INTERVAL = 5  # seconds
-DNS_REFRESH_INTERVAL = 3600  # seconds (1h)
+SEND_INTERVAL = 5             # Message send interval (seconds)
+SWITCH_INTERVAL = 60          # IP switch interval (seconds)
+DNS_REFRESH_INTERVAL = 21600  # DNS refresh interval (6 hours)
 
 resolved_ips = []
 ip_index = 0
 last_dns_refresh = 0
+last_switch_time = 0
 
-# Resolve all IP addresses for the FQDN
 def resolve_all_fqdn():
     try:
         all_ips = socket.gethostbyname_ex(FQDN)[2]
@@ -22,7 +22,7 @@ def resolve_all_fqdn():
         print(f"DNS resolution failed: {e}")
         return []
 
-# Initialize socket
+# Create socket and bind
 try:
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.bind(('', 0))
@@ -37,23 +37,29 @@ sock.settimeout(SEND_INTERVAL)
 # Initial DNS resolution
 resolved_ips = resolve_all_fqdn()
 last_dns_refresh = time.time()
+last_switch_time = time.time()
 
 try:
     while True:
-        # Refresh DNS if interval has passed
         now = time.time()
+
+        # Refresh DNS every 6 hours
         if now - last_dns_refresh > DNS_REFRESH_INTERVAL:
             resolved_ips = resolve_all_fqdn()
             last_dns_refresh = now
-            ip_index = 0  # Reset round-robin
+            ip_index = 0
+
+        # Switch to next IP every SWITCH_INTERVAL
+        if now - last_switch_time > SWITCH_INTERVAL:
+            ip_index = (ip_index + 1) % len(resolved_ips)
+            last_switch_time = now
 
         if not resolved_ips:
             print("No valid IPs available. Retrying DNS...")
             time.sleep(5)
             continue
 
-        # Select IP by round-robin
-        current_ip = resolved_ips[ip_index % len(resolved_ips)]
+        current_ip = resolved_ips[ip_index]
         serv_address = (current_ip, PORT)
 
         try:
@@ -63,15 +69,7 @@ try:
         except socket.error as e:
             print(f"Error sending message to {serv_address}: {e}")
 
-        try:
-            rx_message, addr = sock.recvfrom(M_SIZE)
-            print(f"[Server {addr}]: {rx_message.decode('utf-8')}")
-        except socket.timeout:
-            print(f"No response from {current_ip}, trying next IP...")
-            ip_index += 1  # Move to next IP if no response
-        except socket.error as e:
-            print(f"Error during message reception: {e}")
-
+        # No need to receive response (UDP is one-way)
         time.sleep(SEND_INTERVAL)
 
 except KeyboardInterrupt:
